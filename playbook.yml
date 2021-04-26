@@ -1,0 +1,84 @@
+---
+- hosts: all
+  gather_facts: False
+  vars_files:
+    - vault.yml
+
+  vars_prompt:
+    - name: schedule_time
+      prompt: "Do you want to schedule a vm shutdown? If no, just hit Enter. If yes, please provide the time and date for vm shutdown (dd/mm/yyyy hh:mm):"
+      default: 00/00/0000 00:00
+      private: no
+
+  tasks:
+
+    - name: Debug schedule_time
+      debug:
+        var: schedule_time
+
+    - name: Check if hosts are online
+      shell: ping -c 4 {{ inventory_hostname }}
+      register: ping_result
+      delegate_to: localhost
+      ignore_errors: yes
+
+    - name: Debug ping_result
+      debug:
+        var: ping_result.failed
+
+    - name: Check if vmware tools is running
+      community.vmware.vmware_guest_tools_wait:
+        hostname: "{{ vcenter }}"
+        name: "{{ inventory_hostname }}"
+        username: "{{ vsphere_username }}"
+        password: "{{ vsphere_password }}"
+        validate_certs: False
+        timeout: 10
+      delegate_to: localhost
+      when: ping_result.failed == false
+      register: vmwaretools_status
+      ignore_errors: yes
+
+    - name: Debug vmwaretools_status
+      debug:
+        var: vmwaretools_status.failed
+
+    - name: Schedule shutdown operation
+      vmware_guest_powerstate:
+        hostname: "{{ vcenter }}"
+        name: "{{ inventory_hostname }}"
+        username: "{{ vsphere_username }}"
+        password: "{{ vsphere_password }}"
+        scheduled_at: "schedule_time"
+        schedule_task_name: "shutdown-guest-os task"
+        schedule_task_description: "Ansible task for shutdown-guest-os"
+        schedule_task_enabled: true
+        port: 443
+        validate_certs: False
+        state: shutdown-guest
+      when: schedule_time is defined and schedule_time != '00/00/0000 00:00'
+      delegate_to: localhost
+      register: scheduled_operation
+
+    - name: Performing shutdown operation
+      vmware_guest_powerstate:
+        hostname: "{{ vcenter }}"
+        name: "{{ inventory_hostname }}"
+        username: "{{ vsphere_username }}"
+        password: "{{ vsphere_password }}"
+        port: 443
+        validate_certs: False
+        state: shutdown-guest
+      delegate_to: localhost
+      when: ping_result.failed == false and vmwaretools_status.failed == false and schedule_time == '00/00/0000 00:00'
+      throttle: 1
+      register: operation_result
+
+    - name: Debug shutdown result
+      debug:
+        var: operation_result
+
+    - name: Checking results of operation
+      debug:
+        msg: "Shutdown operation completed"
+      when: operation_result.changed == true
