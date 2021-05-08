@@ -15,16 +15,13 @@
     - name: Debug schedule_time
       debug:
         var: schedule_time
-
-    - name: Check if hosts are online
-      shell: ping -c 4 {{ inventory_hostname }}
-      register: ping_result
+    
+    - name: Create empty list of servers that couldn't be shutdown
+      copy:
+        dest: " path_to_file "
+        content: |
+          [failed_servers]
       delegate_to: localhost
-      ignore_errors: yes
-
-    - name: Debug ping_result
-      debug:
-        var: ping_result.failed
 
     - name: Check if vmware tools is running
       community.vmware.vmware_guest_tools_wait:
@@ -35,7 +32,6 @@
         validate_certs: False
         timeout: 10
       delegate_to: localhost
-      when: ping_result.failed == false
       register: vmwaretools_status
       ignore_errors: yes
 
@@ -70,15 +66,34 @@
         validate_certs: False
         state: shutdown-guest
       delegate_to: localhost
-      when: ping_result.failed == false and vmwaretools_status.failed == false and schedule_time == '00/00/0000 00:00'
-      throttle: 1
+      when: vmwaretools_status.failed == false and schedule_time == '00/00/0000 00:00'
+      throttle: 10
       register: operation_result
 
-    - name: Debug shutdown result
-      debug:
-        var: operation_result
+    - name: Add servers that couldn't be shutdown to the file
+      lineinfile:
+          path: " path_to_file "
+          line: "{{ inventory_hostname }} vcenter={{ vcenter }}"
+          insertafter: '[failed_servers]'
+      when: vmwaretools_status.failed == true
+      delegate_to: localhost
+
+    # - name: Debug shutdown result
+    #   debug:
+    #     var: operation_result
 
     - name: Checking results of operation
       debug:
         msg: "Shutdown operation completed"
       when: operation_result.changed == true
+
+    - name: Check if hosts are offline
+      shell: ping -c 4 {{ inventory_hostname }}
+      register: ping_result_final
+      delegate_to: localhost
+      ignore_errors: yes
+
+    - name: Checking final result of shutdown process
+      debug:
+        msg: "VM's have been successfully shutdown"
+      when: ping_result_final.failed == true
